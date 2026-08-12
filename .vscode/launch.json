@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:MacFileExplorer}",
+            "name": "Debug Branch",
+            "target": "Branch",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Branch"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:MacFileExplorer}",
+            "name": "Release Branch",
+            "target": "Branch",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Branch"
+        }
+    ]
+}
