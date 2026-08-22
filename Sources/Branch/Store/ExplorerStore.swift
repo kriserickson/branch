@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
@@ -20,7 +21,7 @@ final class ExplorerStore {
     var showsNewFolderPrompt = false
     var showsDeleteConfirmation = false
     var showsToolSettings = false
-    private(set) var enabledDirectoryToolIDs: Set<DirectoryToolID>
+    private(set) var enabledDirectoryToolIDs: Set<String>
     var preferredMergeToolID: MergeToolID?
 
     private let fileSystem = FileSystemService()
@@ -30,12 +31,13 @@ final class ExplorerStore {
     private var loadTask: Task<Void, Never>?
     private let favoritesDefaultsKey = "Branch.favoriteFolderPaths"
     private let directoryToolsDefaultsKey = "Branch.enabledDirectoryTools"
+    private let customDirectoryToolsDefaultsKey = "Branch.customDirectoryTools"
     private let mergeToolDefaultsKey = "Branch.preferredMergeTool"
 
     let rootURL = URL(fileURLWithPath: "/", isDirectory: true).standardizedFileURL
     let homeURL: URL
     private(set) var favoriteURLs: [URL]
-    private(set) var installedDirectoryTools: [InstalledTool<DirectoryToolID>]
+    private(set) var installedDirectoryTools: [InstalledDirectoryTool]
     private(set) var installedMergeTools: [InstalledTool<MergeToolID>]
 
     init(startingAt url: URL = FileManager.default.homeDirectoryForCurrentUser) {
@@ -57,9 +59,11 @@ final class ExplorerStore {
         } else {
             resolvedFavorites = defaultFavorites.filter { FileManager.default.fileExists(atPath: $0.path) }
         }
-        let savedDirectoryToolIDs = UserDefaults.standard.stringArray(forKey: directoryToolsDefaultsKey)?
-            .compactMap(DirectoryToolID.init(rawValue:))
-        let resolvedEnabledDirectoryToolIDs = Set(savedDirectoryToolIDs ?? detectedDirectoryTools.map(\.id))
+        let savedDirectoryToolIDs = UserDefaults.standard.stringArray(forKey: directoryToolsDefaultsKey)
+        let defaultDirectoryToolIDs = detectedDirectoryTools
+            .filter { $0.builtInID != nil }
+            .map(\.id)
+        let resolvedEnabledDirectoryToolIDs = Set(savedDirectoryToolIDs ?? defaultDirectoryToolIDs)
         let resolvedMergeToolID: MergeToolID?
         if let savedMergeTool = UserDefaults.standard.string(forKey: mergeToolDefaultsKey) {
             resolvedMergeToolID = MergeToolID(rawValue: savedMergeTool)
@@ -368,9 +372,65 @@ final class ExplorerStore {
     }
 
     func setDirectoryTool(_ id: DirectoryToolID, enabled: Bool) {
+        setDirectoryTool(id.rawValue, enabled: enabled)
+    }
+
+    func setDirectoryTool(_ id: String, enabled: Bool) {
         if enabled { enabledDirectoryToolIDs.insert(id) }
         else { enabledDirectoryToolIDs.remove(id) }
-        UserDefaults.standard.set(enabledDirectoryToolIDs.map(\.rawValue).sorted(), forKey: directoryToolsDefaultsKey)
+        saveEnabledDirectoryTools()
+    }
+
+    func restoreDefaultDirectoryTools() {
+        enabledDirectoryToolIDs = Set(
+            installedDirectoryTools
+                .filter { $0.builtInID != nil }
+                .map(\.id)
+        )
+        saveEnabledDirectoryTools()
+    }
+
+    func addDirectoryTool(at url: URL) {
+        guard let tool = Self.makeInstalledDirectoryTool(at: url), tool.builtInID == nil else { return }
+        var paths = UserDefaults.standard.stringArray(forKey: customDirectoryToolsDefaultsKey) ?? []
+        let path = tool.applicationURL.path
+        guard !paths.contains(path) else {
+            enabledDirectoryToolIDs.insert(tool.id)
+            saveEnabledDirectoryTools()
+            return
+        }
+        paths.append(path)
+        UserDefaults.standard.set(paths, forKey: customDirectoryToolsDefaultsKey)
+        installedDirectoryTools = Self.detectInstalledDirectoryTools(customApplicationPaths: paths)
+        enabledDirectoryToolIDs.insert(tool.id)
+        saveEnabledDirectoryTools()
+    }
+
+    func addDirectoryToolWithPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "Add Application"
+        panel.message = "Choose an application that can open a folder."
+        panel.prompt = "Add"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.application]
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor [weak self] in
+                self?.addDirectoryTool(at: url)
+            }
+        }
+    }
+
+    func removeDirectoryTool(_ tool: InstalledDirectoryTool) {
+        guard tool.builtInID == nil else { return }
+        var paths = UserDefaults.standard.stringArray(forKey: customDirectoryToolsDefaultsKey) ?? []
+        paths.removeAll { URL(fileURLWithPath: $0).standardizedFileURL == tool.applicationURL.standardizedFileURL }
+        UserDefaults.standard.set(paths, forKey: customDirectoryToolsDefaultsKey)
+        installedDirectoryTools = Self.detectInstalledDirectoryTools(customApplicationPaths: paths)
+        enabledDirectoryToolIDs.remove(tool.id)
+        saveEnabledDirectoryTools()
     }
 
     func setPreferredMergeTool(_ id: MergeToolID?) {
@@ -380,10 +440,13 @@ final class ExplorerStore {
     }
 
     func openCurrentDirectory(with id: DirectoryToolID) {
+        openCurrentDirectory(with: id.rawValue)
+    }
+
+    func openCurrentDirectory(with id: String) {
         guard enabledDirectoryToolIDs.contains(id),
               let tool = installedDirectoryTools.first(where: { $0.id == id }) else { return }
-        do { try externalTools.openDirectory(currentURL, with: tool) }
-        catch { errorMessage = error.localizedDescription }
+        externalTools.openDirectory(currentURL, with: tool)
     }
 
     var mergeableSelection: [URL]? {
@@ -433,11 +496,42 @@ final class ExplorerStore {
         UserDefaults.standard.set(favoriteURLs.map(\.path), forKey: favoritesDefaultsKey)
     }
 
-    private static func detectInstalledDirectoryTools() -> [InstalledTool<DirectoryToolID>] {
-        DirectoryToolID.allCases.compactMap { id in
-            guard let path = id.applicationPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else { return nil }
-            return InstalledTool(id: id, applicationURL: URL(fileURLWithPath: path, isDirectory: true))
+    private func saveEnabledDirectoryTools() {
+        UserDefaults.standard.set(enabledDirectoryToolIDs.sorted(), forKey: directoryToolsDefaultsKey)
+    }
+
+    private static func detectInstalledDirectoryTools(customApplicationPaths: [String] = UserDefaults.standard.stringArray(forKey: "Branch.customDirectoryTools") ?? []) -> [InstalledDirectoryTool] {
+        let builtIns = DirectoryToolID.allCases.compactMap { id -> InstalledDirectoryTool? in
+            let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id.bundleIdentifier)
+                ?? id.applicationPaths
+                    .first(where: { FileManager.default.fileExists(atPath: $0) })
+                    .map { URL(fileURLWithPath: $0, isDirectory: true) }
+            guard let applicationURL else { return nil }
+            return makeInstalledDirectoryTool(at: applicationURL)
         }
+        let custom = customApplicationPaths.compactMap { makeInstalledDirectoryTool(at: URL(fileURLWithPath: $0, isDirectory: true)) }
+        var seen = Set<String>()
+        return (builtIns + custom).filter { seen.insert($0.id).inserted }
+    }
+
+    private static func makeInstalledDirectoryTool(at url: URL) -> InstalledDirectoryTool? {
+        let applicationURL = url.standardizedFileURL
+        guard applicationURL.pathExtension == "app",
+              FileManager.default.fileExists(atPath: applicationURL.path) else { return nil }
+        let bundleIdentifier = Bundle(url: applicationURL)?.bundleIdentifier
+        let builtInID = DirectoryToolID.builtIn(for: bundleIdentifier)
+        let id = builtInID?.rawValue ?? bundleIdentifier ?? applicationURL.path
+        let name = builtInID?.name
+            ?? (Bundle(url: applicationURL)?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+            ?? (Bundle(url: applicationURL)?.object(forInfoDictionaryKey: "CFBundleName") as? String)
+            ?? applicationURL.deletingPathExtension().lastPathComponent
+        return InstalledDirectoryTool(
+            id: id,
+            name: name,
+            applicationURL: applicationURL,
+            bundleIdentifier: bundleIdentifier,
+            builtInID: builtInID
+        )
     }
 
     private static func detectInstalledMergeTools() -> [InstalledTool<MergeToolID>] {

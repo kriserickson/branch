@@ -7,6 +7,19 @@ PROJECT_DIRECTORY="${SCRIPT_DIRECTORY:h}"
 CONFIGURATION="${1:-release}"
 
 cd "$PROJECT_DIRECTORY"
+
+# Swift's precompiled module cache records absolute paths. If this project was
+# moved, discard the old cache before building so it cannot refer to the prior
+# checkout location.
+BUILD_DIRECTORY="$PROJECT_DIRECTORY/.build"
+BUILD_MARKER="$BUILD_DIRECTORY/.branch-project-directory"
+if [[ -d "$BUILD_DIRECTORY" && ( ! -f "$BUILD_MARKER" || "$(<"$BUILD_MARKER")" != "$PROJECT_DIRECTORY" ) ]]; then
+  echo "Project location changed; clearing stale SwiftPM build artifacts."
+  swift package clean
+fi
+mkdir -p "$BUILD_DIRECTORY"
+print -r -- "$PROJECT_DIRECTORY" > "$BUILD_MARKER"
+
 swift build -c "$CONFIGURATION"
 BIN_DIRECTORY="$(swift build -c "$CONFIGURATION" --show-bin-path)"
 APP_DIRECTORY="$PROJECT_DIRECTORY/.build/Branch.app"

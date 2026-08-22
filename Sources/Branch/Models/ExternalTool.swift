@@ -36,6 +36,32 @@ enum DirectoryToolID: String, CaseIterable, Identifiable, Sendable {
             ["/Applications/Visual Studio Code.app"]
         }
     }
+
+    var bundleIdentifier: String {
+        switch self {
+        case .terminal: "com.apple.Terminal"
+        case .iTerm: "com.googlecode.iterm2"
+        case .ghostty: "com.mitchellh.ghostty"
+        case .vsCode: "com.microsoft.VSCode"
+        }
+    }
+
+    static func builtIn(for bundleIdentifier: String?) -> DirectoryToolID? {
+        guard let bundleIdentifier else { return nil }
+        return allCases.first { $0.bundleIdentifier == bundleIdentifier }
+    }
+}
+
+struct InstalledDirectoryTool: Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let applicationURL: URL
+    let bundleIdentifier: String?
+    let builtInID: DirectoryToolID?
+
+    var symbol: String {
+        builtInID?.symbol ?? "app"
+    }
 }
 
 enum MergeToolID: String, CaseIterable, Identifiable, Sendable {

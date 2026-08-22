@@ -1,0 +1,7 @@
+cp README.md ../../Projects/Swift/MacFileExplorer/README.md
+cp Scripts/build-app.sh ../../Projects/Swift/MacFileExplorer/Scripts/build-app.sh 
+cp Sources/Branch/Models/ExternalTool.swift ../../Projects/Swift/MacFileExplorer/Sources/Branch/Models/ExternalTool.swift 
+cp Sources/Branch/Services/ExternalToolService.swift ../../Projects/Swift/MacFileExplorer/Sources/Branch/Services/ExternalToolService.swift 
+cp Sources/Branch/Store/ExplorerStore.swift ../../Projects/Swift/MacFileExplorer/Sources/Branch/Store/ExplorerStore.swift 
+cp Sources/Branch/Views/FileContentViews.swift ../../Projects/Swift/MacFileExplorer/Sources/Branch/Views/FileContentViews.swift 
+cp Sources/Branch/Views/ToolSettingsView.swift ../../Projects/Swift/MacFileExplorer/Sources/Branch/Views/ToolSettingsView.swift

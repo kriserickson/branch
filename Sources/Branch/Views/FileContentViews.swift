@@ -268,7 +268,7 @@ func DirectoryBackgroundMenu(store: ExplorerStore) -> some View {
                 Button {
                     store.openCurrentDirectory(with: tool.id)
                 } label: {
-                    Label(tool.id.name, systemImage: tool.id.symbol)
+                    Label(tool.name, systemImage: tool.symbol)
                 }
             }
         }

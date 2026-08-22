@@ -19,16 +19,40 @@ struct ToolSettingsView: View {
             GroupBox("Open Current Folder With") {
                 VStack(alignment: .leading, spacing: 10) {
                     if store.installedDirectoryTools.isEmpty {
-                        Text("No supported terminal or editor apps were found.")
+                        Text("No applications have been added yet.")
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(store.installedDirectoryTools) { tool in
-                            Toggle(tool.id.name, isOn: Binding(
-                                get: { store.enabledDirectoryToolIDs.contains(tool.id) },
-                                set: { store.setDirectoryTool(tool.id, enabled: $0) }
-                            ))
+                            HStack {
+                                Toggle(tool.name, isOn: Binding(
+                                    get: { store.enabledDirectoryToolIDs.contains(tool.id) },
+                                    set: { store.setDirectoryTool(tool.id, enabled: $0) }
+                                ))
+                                Spacer()
+                                if tool.builtInID == nil {
+                                    Button {
+                                        store.removeDirectoryTool(tool)
+                                    } label: {
+                                        Image(systemName: "minus.circle")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .foregroundStyle(.secondary)
+                                    .help("Remove application")
+                                }
+                            }
                         }
                     }
+                    HStack {
+                        Button("Add Application…") {
+                            store.addDirectoryToolWithPanel()
+                        }
+                        Button("Restore Defaults") {
+                            store.restoreDefaultDirectoryTools()
+                        }
+                    }
+                    Text("Added applications receive the current folder as an open target. Apps must support opening folders.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 6)

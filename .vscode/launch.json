@@ -1,24 +1,14 @@
 {
+    "version": "0.2.0",
     "configurations": [
         {
-            "type": "swift",
-            "request": "launch",
-            "args": [],
-            "cwd": "${workspaceFolder:MacFileExplorer}",
             "name": "Debug Branch",
-            "target": "Branch",
-            "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug Branch"
-        },
-        {
             "type": "swift",
             "request": "launch",
-            "args": [],
-            "cwd": "${workspaceFolder:MacFileExplorer}",
-            "name": "Release Branch",
-            "target": "Branch",
-            "configuration": "release",
-            "preLaunchTask": "swift: Build Release Branch"
+            "program": "${workspaceFolder}/.build/Branch.app/Contents/MacOS/Branch",
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "Build Branch.app (debug)",
+            "stopOnEntry": false
         }
     ]
 }
