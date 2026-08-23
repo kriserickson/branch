@@ -226,6 +226,19 @@ private func FileContextMenu(item: FileItem, store: ExplorerStore) -> some View 
         } else {
             Button("Add to Favorites") { store.addFavorite(item.url) }
         }
+        let enabledTools = store.installedDirectoryTools.filter { store.enabledDirectoryToolIDs.contains($0.id) }
+        if !enabledTools.isEmpty {
+            Divider()
+            Menu("Open folder with") {
+                ForEach(enabledTools) { tool in
+                    Button {
+                        store.openDirectory(item.url, with: tool.id)
+                    } label: {
+                        Label(tool.name, systemImage: tool.symbol)
+                    }
+                }
+            }
+        }
     }
     if store.mergeableSelection != nil, let tool = store.preferredInstalledMergeTool {
         Divider()
@@ -260,10 +273,8 @@ private func FileContextMenu(item: FileItem, store: ExplorerStore) -> some View 
 @MainActor
 func DirectoryBackgroundMenu(store: ExplorerStore) -> some View {
     let enabledTools = store.installedDirectoryTools.filter { store.enabledDirectoryToolIDs.contains($0.id) }
-    if enabledTools.isEmpty {
-        Button("Configure Open With Tools…") { store.showsToolSettings = true }
-    } else {
-        Menu("Open Current Folder With") {
+    if !enabledTools.isEmpty {
+        Menu("Open folder with") {
             ForEach(enabledTools) { tool in
                 Button {
                     store.openCurrentDirectory(with: tool.id)
@@ -272,7 +283,5 @@ func DirectoryBackgroundMenu(store: ExplorerStore) -> some View {
                 }
             }
         }
-        Divider()
-        Button("Configure Tools…") { store.showsToolSettings = true }
     }
 }

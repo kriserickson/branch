@@ -38,6 +38,42 @@ struct FileSystemService {
         }
     }
 
+    func search(in directory: URL, query: String, showHidden: Bool) throws -> [FileItem] {
+        var isDirectory: ObjCBool = false
+        guard manager.fileExists(atPath: directory.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw FileSystemError.notDirectory(directory)
+        }
+
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return try contents(of: directory, showHidden: showHidden) }
+
+        let options: FileManager.DirectoryEnumerationOptions = showHidden ? [] : [.skipsHiddenFiles]
+        guard let enumerator = manager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: Array(Self.keys),
+            options: options,
+            errorHandler: { _, _ in true }
+        ) else {
+            return []
+        }
+
+        var matches: [FileItem] = []
+        while let url = enumerator.nextObject() as? URL {
+            guard let values = try? url.resourceValues(forKeys: Self.keys) else { continue }
+            let item = FileItem(url: url, resourceValues: values)
+            if item.name.localizedCaseInsensitiveContains(query) {
+                matches.append(item)
+            }
+
+            // Treat application bundles as files instead of searching through
+            // their package contents, matching the rest of the explorer.
+            if item.isApplicationBundle {
+                enumerator.skipDescendants()
+            }
+        }
+        return matches
+    }
+
     func folders(in directory: URL, showHidden: Bool) -> [FileItem] {
         (try? contents(of: directory, showHidden: showHidden))?
             .filter { $0.isDirectory && !$0.isApplicationBundle }

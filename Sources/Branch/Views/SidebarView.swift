@@ -142,6 +142,9 @@ private struct FolderTreeNode: View {
             hasLoaded = false
             if isExpanded.wrappedValue { loadChildren() }
         }
+        .onChange(of: isExpanded.wrappedValue) { _, expanded in
+            if expanded { loadChildren() }
+        }
     }
 
     private func loadChildren() {

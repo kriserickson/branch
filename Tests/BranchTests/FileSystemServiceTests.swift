@@ -48,4 +48,21 @@ struct FileSystemServiceTests {
         #expect(appItem.kindDescription == "Application")
         #expect(service.folders(in: root, showHidden: false).isEmpty)
     }
+
+    @Test func searchesRecursivelyAndCaseInsensitively() throws {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let nested = root.appendingPathComponent("Nested", isDirectory: true)
+        try manager.createDirectory(at: nested, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: root) }
+
+        let match = nested.appendingPathComponent("Needle.TXT")
+        let nonMatch = nested.appendingPathComponent("unrelated.txt")
+        try Data().write(to: match)
+        try Data().write(to: nonMatch)
+
+        let results = try FileSystemService().search(in: root, query: "needle", showHidden: false)
+
+        #expect(results.map(\.name) == ["Needle.TXT"])
+    }
 }

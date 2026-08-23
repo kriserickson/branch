@@ -29,6 +29,7 @@ final class ExplorerStore {
     private var clipboardURLs: [URL] = []
     private var clipboardIsCut = false
     private var loadTask: Task<Void, Never>?
+    private var loadGeneration = 0
     private let favoritesDefaultsKey = "Branch.favoriteFolderPaths"
     private let directoryToolsDefaultsKey = "Branch.enabledDirectoryTools"
     private let customDirectoryToolsDefaultsKey = "Branch.customDirectoryTools"
@@ -223,20 +224,30 @@ final class ExplorerStore {
 
     func reload() {
         loadTask?.cancel()
+        loadGeneration &+= 1
+        let generation = loadGeneration
         let directory = currentURL
         let hidden = showHiddenFiles
+        let query = selectedTab.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        items = []
         isLoading = true
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let loaded = try await Task.detached(priority: .userInitiated) {
-                    try FileSystemService().contents(of: directory, showHidden: hidden)
+                    let fileSystem = FileSystemService()
+                    if query.isEmpty {
+                        return try fileSystem.contents(of: directory, showHidden: hidden)
+                    }
+                    return try fileSystem.search(in: directory, query: query, showHidden: hidden)
                 }.value
-                guard !Task.isCancelled, self.currentURL == directory else { return }
+                guard self.loadGeneration == generation,
+                      self.currentURL == directory,
+                      self.selectedTab.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
                 self.items = loaded
                 self.isLoading = false
             } catch {
-                guard !Task.isCancelled else { return }
+                guard self.loadGeneration == generation else { return }
                 self.items = []
                 self.isLoading = false
                 self.errorMessage = error.localizedDescription
@@ -289,6 +300,7 @@ final class ExplorerStore {
         var tab = selectedTab
         tab.searchText = text
         selectedTab = tab
+        reload()
     }
 
     func setSort(_ sort: FileSort) {
@@ -444,9 +456,13 @@ final class ExplorerStore {
     }
 
     func openCurrentDirectory(with id: String) {
+        openDirectory(currentURL, with: id)
+    }
+
+    func openDirectory(_ directory: URL, with id: String) {
         guard enabledDirectoryToolIDs.contains(id),
               let tool = installedDirectoryTools.first(where: { $0.id == id }) else { return }
-        externalTools.openDirectory(currentURL, with: tool)
+        externalTools.openDirectory(directory, with: tool)
     }
 
     var mergeableSelection: [URL]? {
@@ -480,16 +496,18 @@ final class ExplorerStore {
         let components = url.standardizedFileURL.pathComponents
         guard !components.isEmpty else { return }
         var path = URL(fileURLWithPath: "/", isDirectory: true)
+        var expanded = expandedFolders
         // Reveal the destination by expanding its ancestors only. Expansion of
         // the destination itself is controlled explicitly by its disclosure
         // caret or a double-click in the tree.
         if components.count > 1 {
-            expandedFolders.insert(path)
+            expanded.insert(path)
         }
         for component in components.dropFirst().dropLast() {
             path.appendPathComponent(component, isDirectory: true)
-            expandedFolders.insert(path.standardizedFileURL)
+            expanded.insert(path.standardizedFileURL)
         }
+        expandedFolders = expanded
     }
 
     private func saveFavorites() {
