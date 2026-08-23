@@ -175,9 +175,10 @@ final class BranchAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     @objc private func showAbout() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
         NSApplication.shared.orderFrontStandardAboutPanel(options: [
             .applicationName: "Branch",
-            .applicationVersion: "0.1.0",
+            .applicationVersion: version,
             .credits: NSAttributedString(string: "A tree-first file explorer for macOS.")
         ])
     }
