@@ -124,7 +124,7 @@ final class BranchAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         let inspector = item("Toggle Inspector", #selector(toggleInspector), key: "i")
         inspector.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(inspector)
-        let hidden = item("Show or Hide Hidden Files", #selector(toggleHidden), key: ".")
+        let hidden = item(store.showHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files", #selector(toggleHidden), key: ".")
         hidden.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(hidden)
         menu.addItem(item("Reload", #selector(reload), key: "r"))

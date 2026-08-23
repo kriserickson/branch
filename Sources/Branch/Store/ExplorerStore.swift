@@ -31,6 +31,7 @@ final class ExplorerStore {
     private var loadTask: Task<Void, Never>?
     private var loadGeneration = 0
     private let favoritesDefaultsKey = "Branch.favoriteFolderPaths"
+    private let hiddenFilesDefaultsKey = "Branch.showHiddenFiles"
     private let directoryToolsDefaultsKey = "Branch.enabledDirectoryTools"
     private let customDirectoryToolsDefaultsKey = "Branch.customDirectoryTools"
     private let mergeToolDefaultsKey = "Branch.preferredMergeTool"
@@ -42,6 +43,7 @@ final class ExplorerStore {
     private(set) var installedMergeTools: [InstalledTool<MergeToolID>]
 
     init(startingAt url: URL = FileManager.default.homeDirectoryForCurrentUser) {
+        showHiddenFiles = UserDefaults.standard.object(forKey: hiddenFilesDefaultsKey) as? Bool ?? false
         let detectedDirectoryTools = Self.detectInstalledDirectoryTools()
         let detectedMergeTools = Self.detectInstalledMergeTools()
         let resolvedHomeURL = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
@@ -257,6 +259,7 @@ final class ExplorerStore {
 
     func toggleHiddenFiles() {
         showHiddenFiles.toggle()
+        UserDefaults.standard.set(showHiddenFiles, forKey: hiddenFilesDefaultsKey)
         reload()
     }
 
