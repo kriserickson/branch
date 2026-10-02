@@ -8,8 +8,8 @@ struct SidebarView: View {
             Section("Favorites") {
                 ForEach(store.favoriteURLs, id: \.self) { url in
                     SidebarDestinationRow(
-                        title: displayName(for: url),
-                        symbol: symbol(for: url),
+                        title: store.favoriteDisplayName(for: url),
+                        symbol: store.favoriteSymbol(for: url),
                         url: url,
                         store: store
                     )
@@ -34,22 +34,6 @@ struct SidebarView: View {
         }
     }
 
-    private func displayName(for url: URL) -> String {
-        if url.path == "/" { return "Macintosh HD" }
-        if url == store.homeURL { return "Home" }
-        return url.lastPathComponent
-    }
-
-    private func symbol(for url: URL) -> String {
-        if url.path == "/" { return "internaldrive" }
-        return switch url.lastPathComponent {
-        case "Desktop": "desktopcomputer"
-        case "Documents": "doc.on.doc"
-        case "Downloads": "arrow.down.circle"
-        case "Applications": "square.grid.2x2"
-        default: url == store.homeURL ? "house" : "folder"
-        }
-    }
 }
 
 private struct SidebarDestinationRow: View {

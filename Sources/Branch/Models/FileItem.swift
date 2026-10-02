@@ -6,6 +6,7 @@ struct FileItem: Identifiable, Hashable, Sendable {
     let url: URL
     let name: String
     let isDirectory: Bool
+    let isSymbolicLink: Bool
     let isHidden: Bool
     let fileSize: Int64?
     let modifiedDate: Date?
@@ -21,19 +22,26 @@ struct FileItem: Identifiable, Hashable, Sendable {
 
     var kindDescription: String {
         if isApplicationBundle { return "Application" }
+        if isSymbolicLink { return contentType?.localizedDescription ?? "Symbolic Link" }
         if isDirectory { return "Folder" }
         return contentType?.localizedDescription ?? url.pathExtension.uppercased()
     }
 
     var formattedSize: String {
-        guard !isDirectory, let fileSize else { return "—" }
+        guard (!isDirectory || isSymbolicLink), let fileSize else { return "—" }
         return ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)
     }
 
     init(url: URL, resourceValues: URLResourceValues) {
         self.url = url.standardizedFileURL
         name = resourceValues.localizedName ?? url.lastPathComponent
-        isDirectory = resourceValues.isDirectory ?? false
+        isSymbolicLink = resourceValues.isSymbolicLink ?? false
+        if isSymbolicLink {
+            let destination = url.resolvingSymlinksInPath()
+            isDirectory = (try? destination.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+        } else {
+            isDirectory = resourceValues.isDirectory ?? false
+        }
         isHidden = resourceValues.isHidden ?? false
         fileSize = resourceValues.fileSize.map(Int64.init)
         modifiedDate = resourceValues.contentModificationDate

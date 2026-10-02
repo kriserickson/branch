@@ -65,4 +65,23 @@ struct FileSystemServiceTests {
 
         #expect(results.map(\.name) == ["Needle.TXT"])
     }
+
+    @Test func symbolicLinkToFolderIsNavigable() throws {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let destination = root.appendingPathComponent("CloudStorage/GoogleDrive-user@example.com", isDirectory: true)
+        let link = root.appendingPathComponent("GoogleDrive-user@example.com")
+        try manager.createDirectory(at: destination, withIntermediateDirectories: true)
+        try manager.createSymbolicLink(at: link, withDestinationURL: destination)
+        defer { try? manager.removeItem(at: root) }
+
+        let item = try #require(FileSystemService().contents(of: root, showHidden: false).first {
+            $0.url == link.standardizedFileURL
+        })
+
+        #expect(item.isSymbolicLink)
+        #expect(item.isDirectory)
+        #expect(item.kindDescription.localizedCaseInsensitiveContains("symbolic"))
+        #expect(FileSystemService().folders(in: root, showHidden: false).contains(item))
+    }
 }

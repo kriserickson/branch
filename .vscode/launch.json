@@ -5,10 +5,21 @@
             "name": "Debug Branch",
             "type": "swift",
             "request": "launch",
-            "program": "${workspaceFolder}/.build/Branch.app/Contents/MacOS/Branch",
-            "cwd": "${workspaceFolder}",
-            "preLaunchTask": "Build Branch.app (debug)",
-            "stopOnEntry": false
+            "cwd": "${workspaceFolder:MacFileExplorer}",
+            "preLaunchTask": "swift: Build Debug Branch",
+            "stopOnEntry": false,
+            "target": "Branch",
+            "configuration": "debug"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:MacFileExplorer}",
+            "name": "Release Branch",
+            "target": "Branch",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Branch"
         }
     ]
 }

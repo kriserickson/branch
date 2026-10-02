@@ -19,7 +19,7 @@ struct FileSystemService {
     private static let keys: Set<URLResourceKey> = [
         .localizedNameKey, .isDirectoryKey, .isHiddenKey, .fileSizeKey,
         .contentModificationDateKey, .creationDateKey, .contentTypeKey,
-        .isReadableKey, .isVolumeKey
+        .isReadableKey, .isVolumeKey, .isSymbolicLinkKey
     ]
 
     func contents(of directory: URL, showHidden: Bool) throws -> [FileItem] {

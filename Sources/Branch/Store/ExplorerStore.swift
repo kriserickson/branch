@@ -25,6 +25,7 @@ final class ExplorerStore {
     var preferredMergeToolID: MergeToolID?
 
     private let fileSystem = FileSystemService()
+    private let cloudDrives = CloudDriveService()
     private let externalTools = ExternalToolService()
     private var clipboardURLs: [URL] = []
     private var clipboardIsCut = false
@@ -39,6 +40,7 @@ final class ExplorerStore {
     let rootURL = URL(fileURLWithPath: "/", isDirectory: true).standardizedFileURL
     let homeURL: URL
     private(set) var favoriteURLs: [URL]
+    private(set) var cloudDriveLocations: [CloudDriveLocation]
     private(set) var installedDirectoryTools: [InstalledDirectoryTool]
     private(set) var installedMergeTools: [InstalledTool<MergeToolID>]
 
@@ -80,6 +82,7 @@ final class ExplorerStore {
         preferredMergeToolID = resolvedMergeToolID
         homeURL = resolvedHomeURL
         favoriteURLs = resolvedFavorites
+        cloudDriveLocations = CloudDriveService().discover(in: resolvedHomeURL)
         tabs = [tab]
         selectedTabID = tab.id
         syncTree(to: url)
@@ -318,7 +321,7 @@ final class ExplorerStore {
     }
 
     func isFavorite(_ url: URL) -> Bool {
-        favoriteURLs.contains(url.standardizedFileURL)
+        favoriteURLs.contains { sameLocation($0, url) }
     }
 
     func addFavorite(_ url: URL) {
@@ -330,8 +333,50 @@ final class ExplorerStore {
 
     func removeFavorite(_ url: URL) {
         let folder = url.standardizedFileURL
-        favoriteURLs.removeAll { $0.standardizedFileURL == folder }
+        favoriteURLs.removeAll { sameLocation($0, folder) }
         saveFavorites()
+    }
+
+    func refreshCloudDrives() {
+        cloudDriveLocations = cloudDrives.discover(in: homeURL)
+    }
+
+    func addFavoriteWithPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "Add Favorite Folder"
+        panel.message = "Choose a cloud drive or any other folder to show in Favorites."
+        panel.prompt = "Add to Favorites"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor [weak self] in
+                self?.addFavorite(url)
+                self?.refreshCloudDrives()
+            }
+        }
+    }
+
+    func favoriteDisplayName(for url: URL) -> String {
+        if url.path == "/" { return "Macintosh HD" }
+        if url == homeURL { return "Home" }
+        return cloudDriveLocations.first(where: { sameLocation($0.url, url) })?.name
+            ?? url.lastPathComponent
+    }
+
+    func favoriteSymbol(for url: URL) -> String {
+        if url.path == "/" { return "internaldrive" }
+        if let cloudDrive = cloudDriveLocations.first(where: { sameLocation($0.url, url) }) {
+            return cloudDrive.symbol
+        }
+        return switch url.lastPathComponent {
+        case "Desktop": "desktopcomputer"
+        case "Documents": "doc.on.doc"
+        case "Downloads": "arrow.down.circle"
+        case "Applications": "square.grid.2x2"
+        default: url == homeURL ? "house" : "folder"
+        }
     }
 
     func beginRename(_ url: URL) {
@@ -515,6 +560,12 @@ final class ExplorerStore {
 
     private func saveFavorites() {
         UserDefaults.standard.set(favoriteURLs.map(\.path), forKey: favoritesDefaultsKey)
+    }
+
+    private func sameLocation(_ lhs: URL, _ rhs: URL) -> Bool {
+        let left = lhs.standardizedFileURL
+        let right = rhs.standardizedFileURL
+        return left == right || left.resolvingSymlinksInPath() == right.resolvingSymlinksInPath()
     }
 
     private func saveEnabledDirectoryTools() {
