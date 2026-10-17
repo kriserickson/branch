@@ -210,7 +210,7 @@ final class BranchAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     @objc private func showIcons() { store.setViewMode(.icons) }
     @objc private func toggleInspector() { store.showsInspector.toggle() }
     @objc private func toggleHidden() { store.toggleHiddenFiles() }
-    @objc private func reload() { store.reload() }
+    @objc private func reload() { store.reload(refreshingFolderTree: true) }
     @objc private func goBack() { store.goBack() }
     @objc private func goForward() { store.goForward() }
     @objc private func goUp() { store.goUp() }

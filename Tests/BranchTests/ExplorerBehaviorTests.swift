@@ -4,6 +4,28 @@ import Testing
 @testable import Branch
 
 struct ExplorerBehaviorTests {
+    @MainActor @Test func folderTreeRefreshesOnlyForExplicitRefreshesAndMutations() throws {
+        let suiteName = "BranchTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let child = root.appendingPathComponent("Child", isDirectory: true)
+        try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ExplorerStore(startingAt: root, defaults: defaults)
+
+        store.setSearchText("query")
+        store.navigate(to: child)
+        #expect(store.directoryRevision == 0)
+
+        store.reload(refreshingFolderTree: true)
+        #expect(store.directoryRevision == 1)
+
+        store.createFolder()
+        #expect(store.directoryRevision == 2)
+        #expect(FileManager.default.fileExists(atPath: child.appendingPathComponent("Untitled Folder").path))
+    }
+
     @Test func deleteShortcutsLeaveTextEditingAndDialogsAlone() {
         for keyCode: UInt16 in [51, 117] {
             for modifiers: NSEvent.ModifierFlags in [[], .command, [.function, .capsLock]] {

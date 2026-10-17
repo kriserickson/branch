@@ -233,12 +233,12 @@ final class ExplorerStore {
         return current == candidate || current.hasPrefix(candidate + "/")
     }
 
-    func reload() {
+    func reload(refreshingFolderTree: Bool = false) {
         loadTask?.cancel()
         folderSizeTask?.cancel()
         imageMetadataTask?.cancel()
         isCalculatingFolderSizes = false
-        directoryRevision &+= 1
+        if refreshingFolderTree { directoryRevision &+= 1 }
         loadGeneration &+= 1
         let generation = loadGeneration
         let directory = currentURL
@@ -529,7 +529,7 @@ final class ExplorerStore {
             errorMessage = error.localizedDescription
         }
         // Refresh even on partial failure, including cached folder-tree nodes.
-        reload()
+        reload(refreshingFolderTree: true)
     }
 
     func importURLs(_ urls: [URL], to destination: URL) -> Bool {
@@ -645,7 +645,7 @@ final class ExplorerStore {
     private func perform<T>(_ operation: () throws -> T) {
         do {
             _ = try operation()
-            reload()
+            reload(refreshingFolderTree: true)
         } catch {
             errorMessage = error.localizedDescription
         }

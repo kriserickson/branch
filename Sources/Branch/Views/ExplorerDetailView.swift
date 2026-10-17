@@ -70,7 +70,7 @@ private struct ExplorerToolbar: View {
             }
             .fixedSize()
 
-            Button { store.reload() } label: { Image(systemName: "arrow.clockwise") }
+            Button { store.reload(refreshingFolderTree: true) } label: { Image(systemName: "arrow.clockwise") }
                 .buttonStyle(.borderless)
                 .help("Reload")
 
