@@ -18,7 +18,7 @@ struct FileSystemService {
     private let manager = FileManager.default
     private static let keys: Set<URLResourceKey> = [
         .localizedNameKey, .isDirectoryKey, .isHiddenKey, .fileSizeKey,
-        .contentModificationDateKey, .creationDateKey, .contentTypeKey,
+        .contentModificationDateKey, .creationDateKey, .contentAccessDateKey, .contentTypeKey,
         .isReadableKey, .isVolumeKey, .isSymbolicLinkKey
     ]
 
@@ -33,6 +33,7 @@ struct FileSystemService {
             includingPropertiesForKeys: Array(Self.keys),
             options: showHidden ? [] : [.skipsHiddenFiles]
         ).compactMap { url in
+            try Task.checkCancellation()
             guard let values = try? url.resourceValues(forKeys: Self.keys) else { return nil }
             return FileItem(url: url, resourceValues: values)
         }
@@ -59,6 +60,7 @@ struct FileSystemService {
 
         var matches: [FileItem] = []
         while let url = enumerator.nextObject() as? URL {
+            try Task.checkCancellation()
             guard let values = try? url.resourceValues(forKeys: Self.keys) else { continue }
             let item = FileItem(url: url, resourceValues: values)
             if item.name.localizedCaseInsensitiveContains(query) {
@@ -112,11 +114,68 @@ struct FileSystemService {
         }
     }
 
-    func trash(_ urls: [URL]) throws {
-        for url in urls {
+    @discardableResult
+    func trash(_ urls: [URL]) throws -> [URL] {
+        // Search results can contain both a folder and its descendants. Move the
+        // ancestor once so a later descendant does not fail after it has moved.
+        let roots = Self.topLevelURLs(urls)
+        var destinations: [URL] = []
+        for url in roots {
             var result: NSURL?
             try manager.trashItem(at: url, resultingItemURL: &result)
+            if let result { destinations.append(result as URL) }
         }
+        return destinations
+    }
+
+    static func topLevelURLs(_ urls: [URL]) -> [URL] {
+        let unique = Set(urls.map(\.standardizedFileURL))
+        let paths = Set(unique.map(\.path))
+        return unique.filter { url in
+            var parent = url.deletingLastPathComponent()
+            while parent.path != url.path {
+                if paths.contains(parent.path) { return false }
+                if parent.path == "/" { break }
+                parent.deleteLastPathComponent()
+            }
+            return true
+        }.sorted { $0.path < $1.path }
+    }
+
+    func folderSize(at directory: URL) throws -> Int64 {
+        try Task.checkCancellation()
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
+        let root = try directory.resourceValues(forKeys: keys)
+        guard root.isDirectory == true, root.isSymbolicLink != true else {
+            throw FileSystemError.notDirectory(directory)
+        }
+        var enumerationError: Error?
+        guard let enumerator = manager.enumerator(
+            at: directory, includingPropertiesForKeys: Array(keys), options: [],
+            errorHandler: { _, error in
+                enumerationError = error
+                return false
+            }
+        ) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        var bytes: Int64 = 0
+        while let url = enumerator.nextObject() as? URL {
+            try Task.checkCancellation()
+            let values = try url.resourceValues(forKeys: keys)
+            // Include hidden files and package contents, but never follow links
+            // outside the folder or count a link's target twice.
+            if values.isSymbolicLink == true {
+                continue
+            }
+            if values.isDirectory != true {
+                guard let size = values.fileSize else { throw CocoaError(.fileReadUnknown) }
+                bytes += Int64(size)
+            }
+        }
+        try Task.checkCancellation()
+        if let enumerationError { throw enumerationError }
+        return bytes
     }
 
     private func validated(name rawName: String) throws -> String {

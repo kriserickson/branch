@@ -11,7 +11,10 @@ struct FileItem: Identifiable, Hashable, Sendable {
     let fileSize: Int64?
     let modifiedDate: Date?
     let creationDate: Date?
+    let accessedDate: Date?
     let contentType: UTType?
+    var folderSize: FolderSize = .pending
+    var imageMetadata: ImageMetadata?
 
     var id: URL { url }
 
@@ -28,8 +31,40 @@ struct FileItem: Identifiable, Hashable, Sendable {
     }
 
     var formattedSize: String {
-        guard (!isDirectory || isSymbolicLink), let fileSize else { return "—" }
+        if isDirectory && !isSymbolicLink {
+            switch folderSize {
+            case .pending: return "Calculating…"
+            case .unavailable: return "Unavailable"
+            case .complete(let bytes): return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+            }
+        }
+        guard let fileSize else { return "—" }
         return ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)
+    }
+
+    var sizeForSorting: Int64? {
+        if isDirectory && !isSymbolicLink {
+            if case .complete(let bytes) = folderSize { return bytes }
+            return nil
+        }
+        return fileSize
+    }
+
+    func text(for column: FileSort) -> String {
+        switch column {
+        case .name: name
+        case .kind: kindDescription
+        case .dateModified: modifiedDate?.formatted(date: .abbreviated, time: .shortened) ?? "—"
+        case .size: formattedSize
+        case .dateCreated: creationDate?.formatted(date: .abbreviated, time: .shortened) ?? "—"
+        case .dateAccessed: accessedDate?.formatted(date: .abbreviated, time: .shortened) ?? "—"
+        case .fileExtension: url.pathExtension.isEmpty ? "—" : url.pathExtension
+        case .folderPath: url.deletingLastPathComponent().path
+        case .resolution: imageMetadata?.formattedResolution ?? "—"
+        case .dateTaken: imageMetadata?.dateTaken?.formatted(date: .abbreviated, time: .shortened) ?? "—"
+        case .cameraModel: imageMetadata?.cameraModel ?? "—"
+        case .bitDepth: imageMetadata?.bitDepth.map { "\($0) bit" } ?? "—"
+        }
     }
 
     init(url: URL, resourceValues: URLResourceValues) {
@@ -46,8 +81,15 @@ struct FileItem: Identifiable, Hashable, Sendable {
         fileSize = resourceValues.fileSize.map(Int64.init)
         modifiedDate = resourceValues.contentModificationDate
         creationDate = resourceValues.creationDate
+        accessedDate = resourceValues.contentAccessDate
         contentType = resourceValues.contentType
     }
+}
+
+enum FolderSize: Hashable, Sendable {
+    case pending
+    case complete(Int64)
+    case unavailable
 }
 
 enum ExplorerViewMode: String, CaseIterable, Sendable {
@@ -69,6 +111,33 @@ enum FileSort: String, CaseIterable, Sendable {
     case kind
     case dateModified
     case size
+    case dateCreated
+    case dateAccessed
+    case fileExtension
+    case folderPath
+    case resolution
+    case dateTaken
+    case cameraModel
+    case bitDepth
+
+    static let defaultColumns: [FileSort] = [.name, .dateModified, .kind, .size]
+
+    var width: CGFloat {
+        switch self {
+        case .name: 220
+        case .dateModified, .dateCreated, .dateAccessed, .dateTaken: 175
+        case .kind: 140
+        case .size: 105
+        case .fileExtension, .bitDepth: 95
+        case .resolution: 135
+        case .cameraModel: 170
+        case .folderPath: 260
+        }
+    }
+
+    var needsImageMetadata: Bool {
+        [.resolution, .dateTaken, .cameraModel, .bitDepth].contains(self)
+    }
 
     var title: String {
         switch self {
@@ -76,7 +145,44 @@ enum FileSort: String, CaseIterable, Sendable {
         case .kind: "Kind"
         case .dateModified: "Date Modified"
         case .size: "Size"
+        case .dateCreated: "Date Created"
+        case .dateAccessed: "Date Accessed"
+        case .fileExtension: "Extension"
+        case .folderPath: "Folder Path"
+        case .resolution: "Resolution"
+        case .dateTaken: "Date Taken"
+        case .cameraModel: "Camera Model"
+        case .bitDepth: "Bit Depth"
         }
+    }
+
+    func precedes(_ lhs: FileItem, _ rhs: FileItem, ascending: Bool) -> Bool {
+        if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+        func compare<T: Comparable>(_ left: T?, _ right: T?) -> ComparisonResult {
+            switch (left, right) {
+            case (nil, nil): .orderedSame
+            case (nil, _): ascending ? .orderedDescending : .orderedAscending
+            case (_, nil): ascending ? .orderedAscending : .orderedDescending
+            case (.some(let left), .some(let right)):
+                left == right ? .orderedSame : (left < right ? .orderedAscending : .orderedDescending)
+            }
+        }
+        let comparison: ComparisonResult = switch self {
+        case .name: lhs.name.localizedStandardCompare(rhs.name)
+        case .kind: lhs.kindDescription.localizedStandardCompare(rhs.kindDescription)
+        case .dateModified: compare(lhs.modifiedDate, rhs.modifiedDate)
+        case .size: compare(lhs.sizeForSorting, rhs.sizeForSorting)
+        case .dateCreated: compare(lhs.creationDate, rhs.creationDate)
+        case .dateAccessed: compare(lhs.accessedDate, rhs.accessedDate)
+        case .fileExtension: lhs.url.pathExtension.localizedStandardCompare(rhs.url.pathExtension)
+        case .folderPath: lhs.url.deletingLastPathComponent().path.localizedStandardCompare(rhs.url.deletingLastPathComponent().path)
+        case .resolution: compare(lhs.imageMetadata?.pixelCount, rhs.imageMetadata?.pixelCount)
+        case .dateTaken: compare(lhs.imageMetadata?.dateTaken, rhs.imageMetadata?.dateTaken)
+        case .cameraModel: compare(lhs.imageMetadata?.cameraModel, rhs.imageMetadata?.cameraModel)
+        case .bitDepth: compare(lhs.imageMetadata?.bitDepth, rhs.imageMetadata?.bitDepth)
+        }
+        let resolved = comparison == .orderedSame ? lhs.name.localizedStandardCompare(rhs.name) : comparison
+        return ascending ? resolved == .orderedAscending : resolved == .orderedDescending
     }
 }
 

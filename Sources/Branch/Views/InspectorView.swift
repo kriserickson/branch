@@ -57,7 +57,7 @@ struct InspectorView: View {
                     Text("\(store.selectedItems.count) Items Selected")
                         .font(.headline)
                     Button("Move to Trash", role: .destructive) {
-                        store.showsDeleteConfirmation = true
+                        store.requestTrash()
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

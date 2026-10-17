@@ -3,6 +3,60 @@ import Testing
 @testable import Branch
 
 struct FileSystemServiceTests {
+    @Test func folderSizesIncludeNestedHiddenAndPackageContentsWithoutFollowingLinks() throws {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let folder = root.appendingPathComponent("Folder", isDirectory: true)
+        let package = folder.appendingPathComponent("Nested/Example.app", isDirectory: true)
+        try manager.createDirectory(at: package, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: root) }
+        try Data(repeating: 1, count: 7).write(to: folder.appendingPathComponent("one.txt"))
+        try Data(repeating: 2, count: 11).write(to: folder.appendingPathComponent(".hidden"))
+        try Data(repeating: 3, count: 13).write(to: package.appendingPathComponent("data"))
+        let external = root.appendingPathComponent("outside.txt")
+        try Data(repeating: 4, count: 100).write(to: external)
+        try manager.createSymbolicLink(at: folder.appendingPathComponent("link"), withDestinationURL: external)
+        try manager.createSymbolicLink(at: folder.appendingPathComponent("cycle"), withDestinationURL: folder)
+
+        let bytes = try FileSystemService().folderSize(at: folder)
+        #expect(bytes == 31)
+        let empty = root.appendingPathComponent("Empty", isDirectory: true)
+        try manager.createDirectory(at: empty, withIntermediateDirectories: false)
+        #expect(try FileSystemService().folderSize(at: empty) == 0)
+    }
+
+    @Test func folderSizingCooperatesWithCancellation() async throws {
+        let task = Task.detached {
+            while !Task.isCancelled { await Task.yield() }
+            return try FileSystemService().folderSize(at: URL(fileURLWithPath: "/"))
+        }
+        task.cancel()
+        do {
+            _ = try await task.value
+            Issue.record("Cancelled folder sizing should stop")
+        } catch {
+            #expect(error is CancellationError)
+        }
+    }
+
+    @Test func trashesNonemptyFolderOnceWhenDescendantsAreAlsoSelected() throws {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let folder = root.appendingPathComponent("Branch-Trash-Test-\(UUID().uuidString)", isDirectory: true)
+        try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: root) }
+        let file = folder.appendingPathComponent("keep.txt")
+        try Data("test contents".utf8).write(to: file)
+
+        let destinations = try FileSystemService().trash([file, folder, folder])
+        let destination = try #require(destinations.first)
+        // Restore our generated fixture immediately so the test leaves no Trash.
+        defer { try? manager.moveItem(at: destination, to: folder) }
+        #expect(destinations.count == 1)
+        #expect(!manager.fileExists(atPath: folder.path))
+        #expect(try String(contentsOf: destination.appendingPathComponent("keep.txt"), encoding: .utf8) == "test contents")
+    }
+
     @Test func createsRenamesCopiesAndListsFolders() throws {
         let manager = FileManager.default
         let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

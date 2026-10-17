@@ -16,9 +16,10 @@ enum BranchApplication {
 }
 
 @MainActor
-final class BranchAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class BranchAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     private let store = ExplorerStore()
     private var window: NSWindow?
+    private var deleteKeyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installIcon()
@@ -46,6 +47,7 @@ final class BranchAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         self.window = window
+        installDeleteKeyHandler()
 
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
@@ -202,17 +204,60 @@ final class BranchAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate
     @objc private func paste() { store.paste() }
     @objc private func duplicateSelection() { store.duplicateSelection() }
     @objc private func renameSelection() { if let url = store.selectedTab.selectedURLs.first { store.beginRename(url) } }
-    @objc private func confirmTrash() { if !store.selectedTab.selectedURLs.isEmpty { store.showsDeleteConfirmation = true } }
+    @objc private func confirmTrash() { store.requestTrash() }
     @objc private func selectAll() { store.setSelection(Set(store.displayedItems.map(\.url))) }
     @objc private func showList() { store.setViewMode(.list) }
     @objc private func showIcons() { store.setViewMode(.icons) }
     @objc private func toggleInspector() { store.showsInspector.toggle() }
     @objc private func toggleHidden() { store.toggleHiddenFiles() }
-    @objc private func reload() { store.reload() }
+    @objc private func reload() { store.reload(refreshingFolderTree: true) }
     @objc private func goBack() { store.goBack() }
     @objc private func goForward() { store.goForward() }
     @objc private func goUp() { store.goUp() }
     @objc private func goHome() { store.navigate(to: store.homeURL) }
     @objc private func minimizeWindow() { window?.miniaturize(nil) }
     @objc private func zoomWindow() { window?.performZoom(nil) }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(confirmTrash) {
+            return !store.selectedTab.selectedURLs.isEmpty && !isEditingText && !isPresentingDialog
+        }
+        return true
+    }
+
+    private var isEditingText: Bool {
+        window?.firstResponder is NSTextView || window?.firstResponder is NSTextField
+    }
+
+    private var isPresentingDialog: Bool {
+        window?.attachedSheet != nil || NSApp.modalWindow != nil || store.errorMessage != nil ||
+            store.showsRenamePrompt || store.showsNewFolderPrompt || store.showsDeleteConfirmation || store.showsToolSettings
+    }
+
+    private func installDeleteKeyHandler() {
+        deleteKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let handled = MainActor.assumeIsolated {
+                guard let self, let window = self.window, event.window === window else { return false }
+                guard FileKeyboardShortcut.shouldTrash(
+                    keyCode: event.keyCode, modifiers: event.modifierFlags,
+                    isEditingText: self.isEditingText, isPresentingDialog: self.isPresentingDialog,
+                    hasSelection: !self.store.selectedTab.selectedURLs.isEmpty
+                ) else { return false }
+                self.store.requestTrash()
+                return true
+            }
+            return handled ? nil : event
+        }
+    }
+}
+
+enum FileKeyboardShortcut {
+    static func shouldTrash(
+        keyCode: UInt16, modifiers: NSEvent.ModifierFlags,
+        isEditingText: Bool, isPresentingDialog: Bool, hasSelection: Bool
+    ) -> Bool {
+        let modifiers = modifiers.intersection([.command, .option, .control, .shift])
+        return (keyCode == 51 || keyCode == 117) && (modifiers.isEmpty || modifiers == .command) &&
+            hasSelection && !isEditingText && !isPresentingDialog
+    }
 }
