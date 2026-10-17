@@ -76,6 +76,11 @@ private struct SortHeader: View {
         // Give a double-click precedence so it changes the sort only once.
         .onTapGesture(count: 2) { store.setSort(sort) }
         .onTapGesture { store.setSort(sort) }
+        .focusable()
+        .onKeyPress(.space) {
+            store.setSort(sort)
+            return .handled
+        }
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(sort.title)
         .accessibilityValue(store.selectedTab.sort == sort ? (store.selectedTab.sortAscending ? "Ascending" : "Descending") : "Not sorted")
