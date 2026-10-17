@@ -32,7 +32,7 @@ struct ExplorerView: View {
             Button("Rename") { store.commitRename() }
         }
         .alert("Move to Trash?", isPresented: $store.showsDeleteConfirmation) {
-            Button("Cancel", role: .cancel) {}
+            Button("Cancel", role: .cancel) { store.cancelTrash() }
             Button("Move to Trash", role: .destructive) { store.trashSelection() }
         } message: {
             Text(deleteMessage)
@@ -52,7 +52,7 @@ struct ExplorerView: View {
     }
 
     private var deleteMessage: String {
-        let count = store.selectedTab.selectedURLs.count
+        let count = store.pendingTrashURLs.count
         return count == 1 ? "The selected item will be moved to the Trash." : "These \(count) items will be moved to the Trash."
     }
 }

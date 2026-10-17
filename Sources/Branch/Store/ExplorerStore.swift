@@ -20,6 +20,10 @@ final class ExplorerStore {
     var newFolderText = "Untitled Folder"
     var showsNewFolderPrompt = false
     var showsDeleteConfirmation = false
+    private(set) var pendingTrashURLs: [URL] = []
+    private(set) var visibleColumns: [FileSort]
+    private(set) var isCalculatingFolderSizes = false
+    private(set) var directoryRevision = 0
     var showsToolSettings = false
     private(set) var enabledDirectoryToolIDs: Set<String>
     var preferredMergeToolID: MergeToolID?
@@ -29,13 +33,17 @@ final class ExplorerStore {
     private let externalTools = ExternalToolService()
     private var clipboardURLs: [URL] = []
     private var clipboardIsCut = false
-    private var loadTask: Task<Void, Never>?
+    @ObservationIgnored private var loadTask: Task<Void, Never>?
+    @ObservationIgnored private var folderSizeTask: Task<Void, Never>?
+    @ObservationIgnored private var imageMetadataTask: Task<Void, Never>?
     private var loadGeneration = 0
     private let favoritesDefaultsKey = "Branch.favoriteFolderPaths"
     private let hiddenFilesDefaultsKey = "Branch.showHiddenFiles"
     private let directoryToolsDefaultsKey = "Branch.enabledDirectoryTools"
     private let customDirectoryToolsDefaultsKey = "Branch.customDirectoryTools"
     private let mergeToolDefaultsKey = "Branch.preferredMergeTool"
+    private let columnsDefaultsKey = "Branch.visibleColumns"
+    @ObservationIgnored private let defaults: UserDefaults
 
     let rootURL = URL(fileURLWithPath: "/", isDirectory: true).standardizedFileURL
     let homeURL: URL
@@ -44,9 +52,19 @@ final class ExplorerStore {
     private(set) var installedDirectoryTools: [InstalledDirectoryTool]
     private(set) var installedMergeTools: [InstalledTool<MergeToolID>]
 
-    init(startingAt url: URL = FileManager.default.homeDirectoryForCurrentUser) {
-        showHiddenFiles = UserDefaults.standard.object(forKey: hiddenFilesDefaultsKey) as? Bool ?? false
-        let detectedDirectoryTools = Self.detectInstalledDirectoryTools()
+    init(startingAt url: URL = FileManager.default.homeDirectoryForCurrentUser, defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        showHiddenFiles = defaults.object(forKey: hiddenFilesDefaultsKey) as? Bool ?? false
+        if let savedColumns = defaults.stringArray(forKey: columnsDefaultsKey) {
+            let columns = [.name] + savedColumns.compactMap(FileSort.init(rawValue:)).filter { $0 != .name }
+            var seen = Set<FileSort>()
+            visibleColumns = columns.filter { seen.insert($0).inserted }
+        } else {
+            visibleColumns = FileSort.defaultColumns
+        }
+        let detectedDirectoryTools = Self.detectInstalledDirectoryTools(
+            customApplicationPaths: defaults.stringArray(forKey: customDirectoryToolsDefaultsKey) ?? []
+        )
         let detectedMergeTools = Self.detectInstalledMergeTools()
         let resolvedHomeURL = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
         let defaultFavorites = [
@@ -57,20 +75,20 @@ final class ExplorerStore {
             URL(fileURLWithPath: "/Applications", isDirectory: true)
         ]
         let resolvedFavorites: [URL]
-        if let savedPaths = UserDefaults.standard.array(forKey: favoritesDefaultsKey) as? [String] {
+        if let savedPaths = defaults.array(forKey: favoritesDefaultsKey) as? [String] {
             resolvedFavorites = savedPaths
                 .map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }
                 .filter { FileManager.default.fileExists(atPath: $0.path) }
         } else {
             resolvedFavorites = defaultFavorites.filter { FileManager.default.fileExists(atPath: $0.path) }
         }
-        let savedDirectoryToolIDs = UserDefaults.standard.stringArray(forKey: directoryToolsDefaultsKey)
+        let savedDirectoryToolIDs = defaults.stringArray(forKey: directoryToolsDefaultsKey)
         let defaultDirectoryToolIDs = detectedDirectoryTools
             .filter { $0.builtInID != nil }
             .map(\.id)
         let resolvedEnabledDirectoryToolIDs = Set(savedDirectoryToolIDs ?? defaultDirectoryToolIDs)
         let resolvedMergeToolID: MergeToolID?
-        if let savedMergeTool = UserDefaults.standard.string(forKey: mergeToolDefaultsKey) {
+        if let savedMergeTool = defaults.string(forKey: mergeToolDefaultsKey) {
             resolvedMergeToolID = MergeToolID(rawValue: savedMergeTool)
         } else {
             resolvedMergeToolID = detectedMergeTools.first?.id
@@ -89,6 +107,12 @@ final class ExplorerStore {
         reload()
     }
 
+    deinit {
+        loadTask?.cancel()
+        folderSizeTask?.cancel()
+        imageMetadataTask?.cancel()
+    }
+
     var selectedTab: ExplorerTab {
         get { tabs.first(where: { $0.id == selectedTabID }) ?? tabs[0] }
         set {
@@ -104,26 +128,8 @@ final class ExplorerStore {
     var displayedItems: [FileItem] {
         let query = selectedTab.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let filtered = query.isEmpty ? items : items.filter { $0.name.localizedCaseInsensitiveContains(query) }
-        return filtered.sorted { lhs, rhs in
-            if lhs.isDirectory != rhs.isDirectory {
-                return lhs.isDirectory
-            }
-            let comparison: ComparisonResult
-            switch selectedTab.sort {
-            case .name:
-                comparison = lhs.name.localizedStandardCompare(rhs.name)
-            case .kind:
-                comparison = lhs.kindDescription.localizedStandardCompare(rhs.kindDescription)
-            case .dateModified:
-                comparison = (lhs.modifiedDate ?? .distantPast).compare(rhs.modifiedDate ?? .distantPast)
-            case .size:
-                let leftSize = lhs.fileSize ?? 0
-                let rightSize = rhs.fileSize ?? 0
-                comparison = leftSize == rightSize ? .orderedSame : (leftSize < rightSize ? .orderedAscending : .orderedDescending)
-            }
-            let resolved = comparison == .orderedSame ? lhs.name.localizedStandardCompare(rhs.name) : comparison
-            return selectedTab.sortAscending ? resolved == .orderedAscending : resolved == .orderedDescending
-        }
+        let tab = selectedTab
+        return filtered.sorted { tab.sort.precedes($0, $1, ascending: tab.sortAscending) }
     }
 
     func tabBinding(_ id: UUID) -> BindingProxy<ExplorerTab>? {
@@ -229,6 +235,10 @@ final class ExplorerStore {
 
     func reload() {
         loadTask?.cancel()
+        folderSizeTask?.cancel()
+        imageMetadataTask?.cancel()
+        isCalculatingFolderSizes = false
+        directoryRevision &+= 1
         loadGeneration &+= 1
         let generation = loadGeneration
         let directory = currentURL
@@ -239,18 +249,26 @@ final class ExplorerStore {
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let loaded = try await Task.detached(priority: .userInitiated) {
+                let worker = Task.detached(priority: .userInitiated) {
                     let fileSystem = FileSystemService()
                     if query.isEmpty {
                         return try fileSystem.contents(of: directory, showHidden: hidden)
                     }
                     return try fileSystem.search(in: directory, query: query, showHidden: hidden)
-                }.value
-                guard self.loadGeneration == generation,
+                }
+                let loaded = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                guard !Task.isCancelled, self.loadGeneration == generation,
                       self.currentURL == directory,
                       self.selectedTab.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
                 self.items = loaded
                 self.isLoading = false
+                self.setSelection(self.selectedTab.selectedURLs.intersection(Set(loaded.map(\.url))))
+                self.loadFolderSizes(for: loaded, generation: generation)
+                self.loadImageMetadataIfNeeded()
             } catch {
                 guard self.loadGeneration == generation else { return }
                 self.items = []
@@ -262,7 +280,7 @@ final class ExplorerStore {
 
     func toggleHiddenFiles() {
         showHiddenFiles.toggle()
-        UserDefaults.standard.set(showHiddenFiles, forKey: hiddenFilesDefaultsKey)
+        defaults.set(showHiddenFiles, forKey: hiddenFilesDefaultsKey)
         reload()
     }
 
@@ -314,6 +332,77 @@ final class ExplorerStore {
         if tab.sort == sort { tab.sortAscending.toggle() }
         else { tab.sort = sort; tab.sortAscending = true }
         selectedTab = tab
+        loadImageMetadataIfNeeded()
+    }
+
+    func setColumn(_ column: FileSort, visible: Bool) {
+        guard column != .name else { return }
+        if visible && !visibleColumns.contains(column) {
+            let order = FileSort.defaultColumns + FileSort.allCases.filter { !FileSort.defaultColumns.contains($0) }
+            let selected = Set(visibleColumns + [column])
+            visibleColumns = order.filter { selected.contains($0) }
+        } else if !visible {
+            visibleColumns.removeAll { $0 == column }
+        }
+        defaults.set(visibleColumns.map(\.rawValue), forKey: columnsDefaultsKey)
+        loadImageMetadataIfNeeded()
+    }
+
+    func restoreDefaultColumns() {
+        visibleColumns = FileSort.defaultColumns
+        defaults.set(visibleColumns.map(\.rawValue), forKey: columnsDefaultsKey)
+        loadImageMetadataIfNeeded()
+    }
+
+    private func loadFolderSizes(for loaded: [FileItem], generation: Int) {
+        let folders = loaded.filter { $0.isDirectory && !$0.isSymbolicLink }
+        guard !folders.isEmpty else { return }
+        isCalculatingFolderSizes = true
+        folderSizeTask = Task.detached(priority: .background) { [weak self] in
+            let service = FileSystemService()
+            for folder in folders {
+                guard !Task.isCancelled else { return }
+                let size: FolderSize
+                do { size = .complete(try service.folderSize(at: folder.url)) }
+                catch is CancellationError { return }
+                catch { size = .unavailable }
+                await self?.applyFolderSize(size, at: folder.url, generation: generation)
+                do { try await Task.sleep(for: .milliseconds(25)) }
+                catch { return }
+            }
+            await self?.finishFolderSizes(generation: generation)
+        }
+    }
+
+    private func applyFolderSize(_ size: FolderSize, at url: URL, generation: Int) {
+        guard loadGeneration == generation, let index = items.firstIndex(where: { $0.url == url }) else { return }
+        items[index].folderSize = size
+    }
+
+    private func finishFolderSizes(generation: Int) {
+        guard loadGeneration == generation else { return }
+        isCalculatingFolderSizes = false
+    }
+
+    private func loadImageMetadataIfNeeded() {
+        imageMetadataTask?.cancel()
+        guard visibleColumns.contains(where: \.needsImageMetadata) || selectedTab.sort.needsImageMetadata else { return }
+        let generation = loadGeneration
+        let images = items.filter { !$0.isDirectory && $0.imageMetadata == nil && $0.contentType?.conforms(to: .image) == true }
+        imageMetadataTask = Task.detached(priority: .background) { [weak self] in
+            let service = ImageMetadataService()
+            for image in images {
+                guard !Task.isCancelled else { return }
+                let metadata = autoreleasepool { service.metadata(at: image.url) }
+                guard !Task.isCancelled else { return }
+                await self?.applyImageMetadata(metadata, at: image.url, generation: generation)
+            }
+        }
+    }
+
+    private func applyImageMetadata(_ metadata: ImageMetadata?, at url: URL, generation: Int) {
+        guard loadGeneration == generation, let index = items.firstIndex(where: { $0.url == url }) else { return }
+        items[index].imageMetadata = metadata
     }
 
     func folders(in url: URL) -> [FileItem] {
@@ -416,9 +505,31 @@ final class ExplorerStore {
         perform { try fileSystem.copy(urls, to: currentURL) }
     }
 
+    func requestTrash(_ urls: Set<URL>? = nil) {
+        let targets = FileSystemService.topLevelURLs(Array(urls ?? selectedTab.selectedURLs))
+        guard !targets.isEmpty else { return }
+        pendingTrashURLs = targets
+        showsDeleteConfirmation = true
+    }
+
+    func cancelTrash() {
+        pendingTrashURLs = []
+        showsDeleteConfirmation = false
+    }
+
     func trashSelection() {
-        let urls = selectedTab.selectedURLs.sorted { $0.path < $1.path }
-        perform { try fileSystem.trash(urls) }
+        let targets = pendingTrashURLs
+        pendingTrashURLs = []
+        showsDeleteConfirmation = false
+        guard !targets.isEmpty else { return }
+        do {
+            try fileSystem.trash(targets)
+            setSelection(selectedTab.selectedURLs.subtracting(targets))
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        // Refresh even on partial failure, including cached folder-tree nodes.
+        reload()
     }
 
     func importURLs(_ urls: [URL], to destination: URL) -> Bool {
@@ -452,7 +563,7 @@ final class ExplorerStore {
 
     func addDirectoryTool(at url: URL) {
         guard let tool = Self.makeInstalledDirectoryTool(at: url), tool.builtInID == nil else { return }
-        var paths = UserDefaults.standard.stringArray(forKey: customDirectoryToolsDefaultsKey) ?? []
+        var paths = defaults.stringArray(forKey: customDirectoryToolsDefaultsKey) ?? []
         let path = tool.applicationURL.path
         guard !paths.contains(path) else {
             enabledDirectoryToolIDs.insert(tool.id)
@@ -460,7 +571,7 @@ final class ExplorerStore {
             return
         }
         paths.append(path)
-        UserDefaults.standard.set(paths, forKey: customDirectoryToolsDefaultsKey)
+        defaults.set(paths, forKey: customDirectoryToolsDefaultsKey)
         installedDirectoryTools = Self.detectInstalledDirectoryTools(customApplicationPaths: paths)
         enabledDirectoryToolIDs.insert(tool.id)
         saveEnabledDirectoryTools()
@@ -485,9 +596,9 @@ final class ExplorerStore {
 
     func removeDirectoryTool(_ tool: InstalledDirectoryTool) {
         guard tool.builtInID == nil else { return }
-        var paths = UserDefaults.standard.stringArray(forKey: customDirectoryToolsDefaultsKey) ?? []
+        var paths = defaults.stringArray(forKey: customDirectoryToolsDefaultsKey) ?? []
         paths.removeAll { URL(fileURLWithPath: $0).standardizedFileURL == tool.applicationURL.standardizedFileURL }
-        UserDefaults.standard.set(paths, forKey: customDirectoryToolsDefaultsKey)
+        defaults.set(paths, forKey: customDirectoryToolsDefaultsKey)
         installedDirectoryTools = Self.detectInstalledDirectoryTools(customApplicationPaths: paths)
         enabledDirectoryToolIDs.remove(tool.id)
         saveEnabledDirectoryTools()
@@ -495,8 +606,8 @@ final class ExplorerStore {
 
     func setPreferredMergeTool(_ id: MergeToolID?) {
         preferredMergeToolID = id
-        if let id { UserDefaults.standard.set(id.rawValue, forKey: mergeToolDefaultsKey) }
-        else { UserDefaults.standard.removeObject(forKey: mergeToolDefaultsKey) }
+        if let id { defaults.set(id.rawValue, forKey: mergeToolDefaultsKey) }
+        else { defaults.removeObject(forKey: mergeToolDefaultsKey) }
     }
 
     func openCurrentDirectory(with id: DirectoryToolID) {
@@ -559,7 +670,7 @@ final class ExplorerStore {
     }
 
     private func saveFavorites() {
-        UserDefaults.standard.set(favoriteURLs.map(\.path), forKey: favoritesDefaultsKey)
+        defaults.set(favoriteURLs.map(\.path), forKey: favoritesDefaultsKey)
     }
 
     private func sameLocation(_ lhs: URL, _ rhs: URL) -> Bool {
@@ -569,7 +680,7 @@ final class ExplorerStore {
     }
 
     private func saveEnabledDirectoryTools() {
-        UserDefaults.standard.set(enabledDirectoryToolIDs.sorted(), forKey: directoryToolsDefaultsKey)
+        defaults.set(enabledDirectoryToolIDs.sorted(), forKey: directoryToolsDefaultsKey)
     }
 
     private static func detectInstalledDirectoryTools(customApplicationPaths: [String] = UserDefaults.standard.stringArray(forKey: "Branch.customDirectoryTools") ?? []) -> [InstalledDirectoryTool] {

@@ -94,6 +94,16 @@ private struct ExplorerToolbar: View {
             .frame(width: 82)
 
             Menu {
+                ColumnPicker(store: store)
+            } label: {
+                Image(systemName: "tablecells")
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 26)
+            .help("Choose Columns")
+            .accessibilityLabel("Columns")
+
+            Menu {
                 ForEach(FileSort.allCases, id: \.self) { sort in
                     Button {
                         store.setSort(sort)
@@ -202,6 +212,9 @@ private struct StatusBar: View {
             let selected = store.selectedTab.selectedURLs.count
             Text(selected == 0 ? "\(store.displayedItems.count) items" : "\(selected) of \(store.displayedItems.count) selected")
             Spacer()
+            if store.isCalculatingFolderSizes {
+                Text("Calculating folder sizes…")
+            }
             if store.showHiddenFiles {
                 Label("Hidden files visible", systemImage: "eye")
             }

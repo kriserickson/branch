@@ -5,22 +5,33 @@ struct FileListView: View {
     @Bindable var store: ExplorerStore
 
     var body: some View {
-        VStack(spacing: 0) {
-            ListHeader(store: store)
-            Divider()
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(store.displayedItems) { item in
-                        FileListRow(item: item, store: store)
+        GeometryReader { geometry in
+            ScrollView(.horizontal) {
+                VStack(spacing: 0) {
+                    ListHeader(store: store)
+                    Divider()
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(store.displayedItems) { item in
+                                FileListRow(item: item, store: store)
+                            }
+                        }
+                        .padding(.vertical, 3)
+                        .frame(maxWidth: .infinity)
+                    }
+                    .background {
+                        Color.clear.contentShape(Rectangle())
+                            .onTapGesture { store.setSelection([]) }
+                    }
+                    .contextMenu { DirectoryBackgroundMenu(store: store) }
+                    .dropDestination(for: URL.self) { urls, _ in
+                        store.importURLs(urls, to: store.currentURL)
                     }
                 }
-                .padding(.vertical, 3)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { store.setSelection([]) }
-            .contextMenu { DirectoryBackgroundMenu(store: store) }
-            .dropDestination(for: URL.self) { urls, _ in
-                store.importURLs(urls, to: store.currentURL)
+                .frame(
+                    width: max(geometry.size.width, store.visibleColumns.reduce(38) { $0 + $1.width }),
+                    height: geometry.size.height
+                )
             }
         }
     }
@@ -31,47 +42,45 @@ private struct ListHeader: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            SortHeader("Name", sort: .name, store: store)
+            SortHeader(sort: .name, store: store)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            SortHeader("Date Modified", sort: .dateModified, store: store)
-                .frame(width: 155, alignment: .leading)
-            SortHeader("Kind", sort: .kind, store: store)
-                .frame(width: 120, alignment: .leading)
-            SortHeader("Size", sort: .size, store: store)
-                .frame(width: 86, alignment: .trailing)
+            ForEach(store.visibleColumns.filter { $0 != .name }, id: \.self) { column in
+                SortHeader(sort: column, store: store)
+                    .frame(width: column.width, alignment: column == .size ? .trailing : .leading)
+            }
         }
         .font(.caption)
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 19)
         .frame(height: 28)
         .background(.bar)
+        .contextMenu { ColumnPicker(store: store) }
     }
 }
 
 private struct SortHeader: View {
-    let title: String
     let sort: FileSort
     @Bindable var store: ExplorerStore
 
-    init(_ title: String, sort: FileSort, store: ExplorerStore) {
-        self.title = title
-        self.sort = sort
-        self.store = store
-    }
-
     var body: some View {
-        Button { store.setSort(sort) } label: {
-            HStack(spacing: 4) {
-                Text(title)
-                if store.selectedTab.sort == sort {
-                    Image(systemName: store.selectedTab.sortAscending ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                }
+        HStack(spacing: 4) {
+            Text(sort.title)
+            if store.selectedTab.sort == sort {
+                Image(systemName: store.selectedTab.sortAscending ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
             }
-            .frame(maxWidth: .infinity, alignment: sort == .size ? .trailing : .leading)
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 5)
+        .padding(.horizontal, sort == .name ? 0 : 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: sort == .size ? .trailing : .leading)
+        .contentShape(Rectangle())
+        // Give a double-click precedence so it changes the sort only once.
+        .onTapGesture(count: 2) { store.setSort(sort) }
+        .onTapGesture { store.setSort(sort) }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(sort.title)
+        .accessibilityValue(store.selectedTab.sort == sort ? (store.selectedTab.sortAscending ? "Ascending" : "Descending") : "Not sorted")
+        .accessibilityAction { store.setSort(sort) }
+        .help("Click or double-click to sort by \(sort.title); repeat to reverse")
     }
 }
 
@@ -90,19 +99,21 @@ private struct FileListRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            .padding(.trailing, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(item.modifiedDate?.formatted(date: .abbreviated, time: .shortened) ?? "—")
-                .frame(width: 155, alignment: .leading)
-                .foregroundStyle(.secondary)
-            Text(item.kindDescription)
-                .frame(width: 120, alignment: .leading)
-                .lineLimit(1)
-                .foregroundStyle(.secondary)
-            Text(item.formattedSize)
-                .frame(width: 86, alignment: .trailing)
-                .foregroundStyle(.secondary)
+            ForEach(store.visibleColumns.filter { $0 != .name }, id: \.self) { column in
+                Text(item.text(for: column))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(width: column.width - 12, alignment: column == .size ? .trailing : .leading)
+                    .clipped()
+                    .padding(.horizontal, 6)
+                    .foregroundStyle(.secondary)
+                    .help(item.text(for: column))
+            }
         }
+        .opacity(item.isHidden ? 0.7 : 1)
         .font(.system(size: 12.5))
         .padding(.horizontal, 15)
         .frame(height: 30)
@@ -120,6 +131,8 @@ private struct FileListRow: View {
             FileContextMenu(item: item, store: store)
                 .onAppear { store.ensureSelectedForContextMenu(item) }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var rowBackground: Color {
@@ -146,8 +159,10 @@ struct FileGridView: View {
             }
             .padding(14)
         }
-        .contentShape(Rectangle())
-        .onTapGesture { store.setSelection([]) }
+        .background {
+            Color.clear.contentShape(Rectangle())
+                .onTapGesture { store.setSelection([]) }
+        }
         .contextMenu { DirectoryBackgroundMenu(store: store) }
         .dropDestination(for: URL.self) { urls, _ in
             store.importURLs(urls, to: store.currentURL)
@@ -171,6 +186,7 @@ private struct FileGridCell: View {
                 .lineLimit(2)
                 .frame(height: 32, alignment: .top)
         }
+        .opacity(item.isHidden ? 0.7 : 1)
         .padding(8)
         .frame(maxWidth: .infinity)
         .background(background, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -186,6 +202,8 @@ private struct FileGridCell: View {
             FileContextMenu(item: item, store: store)
                 .onAppear { store.ensureSelectedForContextMenu(item) }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var background: Color {
@@ -264,8 +282,7 @@ private func FileContextMenu(item: FileItem, store: ExplorerStore) -> some View 
         store.revealSelection()
     }
     Button("Move to Trash", role: .destructive) {
-        store.setSelection([item.url])
-        store.showsDeleteConfirmation = true
+        store.requestTrash(store.selectedTab.selectedURLs.contains(item.url) ? store.selectedTab.selectedURLs : [item.url])
     }
 }
 
@@ -283,5 +300,22 @@ func DirectoryBackgroundMenu(store: ExplorerStore) -> some View {
                 }
             }
         }
+    }
+}
+
+@MainActor
+struct ColumnPicker: View {
+    @Bindable var store: ExplorerStore
+
+    var body: some View {
+        ForEach(FileSort.allCases, id: \.self) { column in
+            Toggle(column.title, isOn: Binding(
+                get: { store.visibleColumns.contains(column) },
+                set: { store.setColumn(column, visible: $0) }
+            ))
+            .disabled(column == .name)
+        }
+        Divider()
+        Button("Restore Default Columns") { store.restoreDefaultColumns() }
     }
 }

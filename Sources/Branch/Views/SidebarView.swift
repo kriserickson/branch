@@ -63,6 +63,7 @@ private struct FolderTreeNode: View {
     let url: URL
     @Bindable var store: ExplorerStore
     let isRoot: Bool
+    var isHidden = false
     @State private var children: [FileItem] = []
     @State private var hasLoaded = false
 
@@ -85,7 +86,7 @@ private struct FolderTreeNode: View {
     var body: some View {
         DisclosureGroup(isExpanded: isExpanded) {
             ForEach(children) { child in
-                FolderTreeNode(url: child.url, store: store, isRoot: false)
+                FolderTreeNode(url: child.url, store: store, isRoot: false, isHidden: child.isHidden)
             }
         } label: {
             HStack(spacing: 7) {
@@ -98,6 +99,7 @@ private struct FolderTreeNode: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
+            .opacity(isHidden ? 0.7 : 1)
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
                 isExpanded.wrappedValue.toggle()
@@ -123,6 +125,10 @@ private struct FolderTreeNode: View {
             if isExpanded.wrappedValue { loadChildren() }
         }
         .onChange(of: store.showHiddenFiles) { _, _ in
+            hasLoaded = false
+            if isExpanded.wrappedValue { loadChildren() }
+        }
+        .onChange(of: store.directoryRevision) { _, _ in
             hasLoaded = false
             if isExpanded.wrappedValue { loadChildren() }
         }
