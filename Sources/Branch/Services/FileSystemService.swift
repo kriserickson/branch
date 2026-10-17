@@ -130,10 +130,11 @@ struct FileSystemService {
 
     static func topLevelURLs(_ urls: [URL]) -> [URL] {
         let unique = Set(urls.map(\.standardizedFileURL))
+        let paths = Set(unique.map(\.path))
         return unique.filter { url in
             var parent = url.deletingLastPathComponent()
             while parent.path != url.path {
-                if unique.contains(where: { $0.path == parent.path }) { return false }
+                if paths.contains(parent.path) { return false }
                 if parent.path == "/" { break }
                 parent.deleteLastPathComponent()
             }
