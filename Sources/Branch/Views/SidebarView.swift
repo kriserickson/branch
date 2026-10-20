@@ -53,6 +53,7 @@ private struct SidebarDestinationRow: View {
         .contextMenu {
             Button("Open in New Tab") { store.newTab(at: url) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            Button("Copy Path") { store.copyPath(url) }
             Divider()
             Button("Remove from Favorites") { store.removeFavorite(url) }
         }
@@ -108,6 +109,7 @@ private struct FolderTreeNode: View {
             .onTapGesture { store.navigate(to: url) }
             .contextMenu {
                 Button("Open in New Tab") { store.newTab(at: url) }
+                Button("Copy Path") { store.copyPath(url) }
                 Button("New Folder") {
                     store.navigate(to: url)
                     store.showsNewFolderPrompt = true

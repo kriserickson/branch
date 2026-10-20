@@ -490,6 +490,12 @@ final class ExplorerStore {
         clipboardIsCut = cut
     }
 
+    func copyPath(_ url: URL) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(url.path, forType: .string)
+    }
+
     func paste() {
         let sources = clipboardURLs
         let isCut = clipboardIsCut

@@ -273,6 +273,7 @@ private func FileContextMenu(item: FileItem, store: ExplorerStore) -> some View 
         store.setSelection([item.url])
         store.copySelection()
     }
+    Button("Copy Path") { store.copyPath(item.url) }
     Button("Move") {
         store.setSelection([item.url])
         store.copySelection(cut: true)
@@ -294,8 +295,10 @@ private func FileContextMenu(item: FileItem, store: ExplorerStore) -> some View 
 @ViewBuilder
 @MainActor
 func DirectoryBackgroundMenu(store: ExplorerStore) -> some View {
+    Button("Copy Path") { store.copyPath(store.currentURL) }
     let enabledTools = store.installedDirectoryTools.filter { store.enabledDirectoryToolIDs.contains($0.id) }
     if !enabledTools.isEmpty {
+        Divider()
         Menu("Open folder with") {
             ForEach(enabledTools) { tool in
                 Button {
